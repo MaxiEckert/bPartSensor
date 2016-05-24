@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<configuration>
+
+    <service uuid="1800">
+      <description>Generic Access Profile</description>
+
+      <characteristic uuid="2a00">
+        <properties read="true" const="true" />
+        <value>TECO bPart</value>
+      </characteristic>
+
+      <characteristic uuid="2a01">
+        <properties read="true" const="true" />
+        <value type="hex">4142</value>
+      </characteristic>
+    </service>
+
+    <service uuid="180a">
+      <characteristic uuid="2a29">
+        <properties read="true" const="true" />
+        <value>Bluegiga</value>
+      </characteristic>
+      
+      <characteristic uuid="2a24">
+        <properties read="true" const="true" />
+        <value>BLE113</value>
+      </characteristic>
+      
+      <characteristic uuid="2a25" id="xgatt_dis_2a25">
+        <properties read="true" />
+        <value type="hex" length="6" />
+      </characteristic>
+    </service>
+
+    <!--<service uuid="e001">
+      <description>Battery status</description>
+
+      <characteristic uuid="e101" id="xgatt_battery">
+          <properties read="true" notify="true" />
+          <value type="hex" length="3" />
+      </characteristic>
+    </service>-->
+	
+	<service uuid="180f" advertise="true">
+        <description>Battery</description>
+        <characteristic uuid="2a19" id="c_battery_measurement">
+            <properties read="true" />
+            <value type="user" />
+        </characteristic>
+    </service>
+      
+    <service uuid="4b822f40-3941-4a4b-a3cc-b2602ffe0d00">
+      <description>Measurement Buffer Service</description>
+      
+      <characteristic uuid="4b822f41-3941-4a4b-a3cc-b2602ffe0d00" id="xgatt_meas_buffer">
+        <properties read="true" />
+        <value type="user" />
+      </characteristic>    
+    </service>
+    
+	<!--NEW! Service for providing the current time(stamp)-->
+    <service uuid="4b822f50-3941-4a4b-a3cc-b2602ffe0d00">
+      <description>Time Service</description>
+
+      <characteristic uuid="4b822f51-3941-4a4b-a3cc-b2602ffe0d00" id="timestamp">
+        <properties read="true" write="true" notify="true"/>
+        <value length="4" type="hex"></value>
+      </characteristic>
+    </service>
+    
+</configuration>

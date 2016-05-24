@@ -1,0 +1,4 @@
+xgatt_dis_2a25 12
+c_battery_measurement 15
+xgatt_meas_buffer 18
+timestamp 21

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<project>
+    <gatt in="gatt_new.xml" />
+    <hardware in="hardware_new.xml" />    
+    <script in="sensors_new.bgs" />
+    <image out="out.hex" />
+    <device type="ble113" memory="128" />
+</project>

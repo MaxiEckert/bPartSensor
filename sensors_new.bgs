@@ -1,0 +1,291 @@
+dim addr(6)
+
+dim res
+dim data(6)
+dim port
+
+#current time
+dim time_val
+#point in time when the next measurement will be read
+dim next_meas_read
+#point in time when the next measurement will be started
+dim next_meas_start
+
+dim temp_val
+dim hum_val
+
+dim bat_pct
+dim data_len
+
+dim hnd
+dim off
+
+dim connected
+dim encrypted
+
+#NEW! 
+#buffer for multiple sensor values with their timestamps 
+dim buffer(32)
+
+dim response_buffer(32)
+
+#offset to next value that will be (over)written
+dim local_write_pointer
+
+#measurement interval
+dim interval
+
+dim flash_read_pointer
+dim flash_read_offset
+
+dim flash_write_pointer
+dim flash_write_offset
+
+# Boot Event listener
+event system_boot(major ,minor ,patch ,build ,ll_version ,protocol_version ,hw )
+  #initialize pointers
+  local_write_pointer = 0
+  interval = 4
+  flash_read_pointer = $8000
+  flash_read_offset = 0
+  flash_write_pointer = $8000
+  
+  #pull up measurement timer
+  next_meas_read = interval
+  next_meas_start = interval-1
+  
+  
+  
+  # set all GPIO pins to input/high (pull)
+  # except P0_2 -> OUTPUT low (LED_IR)
+  # 		P0_3, P0_4, P0_5 -> OUTPUT high (LEDS)
+  # P0_0 -> ADC //TODO
+  # P0_6, P0_7 -> INT pins
+  call hardware_io_port_config_direction(0, $3c)
+  call hardware_io_port_write(0, $38, $ff)
+  call hardware_io_port_write(0, $04, $00)
+  #set all GPI1 pins to input
+  #P1_6 to input (magnetormeter)
+  #REG_ON (Converter) must be output (Pin1_7)
+  call hardware_io_port_config_direction(1, $80)
+  #set all GPI2 pins to input
+  #set P2_0 to input (button)
+  call hardware_io_port_config_direction(2, $00)
+  
+  #Pull up for all pins in port 2 (additional to hardware.xml)
+  #call hardware_io_port_config_pull(2, 0, 1)
+  #Read local BT address
+  call system_address_get( )(addr(0:6))
+
+  # Write BT address to DI service serial number string
+  call attributes_write(xgatt_dis_2a25,0,6,addr(0:5))
+
+  #set bondable mode
+  call sm_set_bondable_mode(1)
+  
+  # set advertisement interval to 1-2 seconds, all three channels
+  # call gap_set_adv_parameters(1600, 3200, 7)
+  call gap_set_adv_parameters(80, 160, 7)
+
+  #set to advertising mode
+  call gap_set_mode(gap_general_discoverable,gap_undirected_connectable)
+  
+  # accelerometer interrupt low active (don't use pull ups for high active)
+  call hardware_i2c_write(50,1,2,"\x25\x02")
+  #disable accelerometer (low power mode enabled)
+  call hardware_i2c_write(50,1,2,"\x20\x08")
+  
+  #NEW!
+  #start timer at 1 second interval, handle 0, and repeating
+  call hardware_set_soft_timer(32768*1,0,0)
+  
+end
+
+# read sensor values
+event hardware_soft_timer(handle) 
+  # blink green LED
+  #call hardware_io_port_write(0, $10, $00)
+  
+#------ count up timestamp ------------------------------------------------------------------------------
+  call attributes_read(timestamp, 0)(hnd, off, res, data_len, time_val)
+  time_val = time_val + 1
+  call attributes_write(timestamp, 0, 4, time_val)
+  next_meas_start = next_meas_start - 1
+  next_meas_read = next_meas_read - 1
+
+#------ time for reading a measurement ------------------------------------------------------------------
+  if (next_meas_read = 0) then
+      #------ Read humidity/temp values that where measured before --------------------------------------
+      #query humidity sensor
+      #call hardware_i2c_write(128,0,1,"\xe5")
+      call hardware_i2c_read(128,0,2)(res, data_len, data(0:2))
+
+      # convert to percentRH
+      hum_val = (data(0:1) << 8) | data(1:1) 
+      hum_val = ((hum_val * 125) >> 16) - 6
+
+
+      #------ query temperature sensor after humidty (same measurement) ---------------------------------
+      #Read Temperature Value from Previous RH Measurement
+      call hardware_i2c_write(128,0,1,"\xe0")
+      call hardware_i2c_read(128,0,2)(res, data_len, data(0:2))
+
+      # convert to milliC (avoid 32bit int overflows)
+      temp_val = (data(0:1) << 8) | data(1:1) 
+      temp_val = (((temp_val * 17572) >> 16) - 4685) * 10
+  end if
+  
+#------ Check if its time to start a new measurement ----------------------------------------------------
+  if (next_meas_start = 0) then
+	# start no hold master humidity measurement  
+	call hardware_i2c_write(128,0,1,"\xF5")
+    next_meas_start = interval
+  end if
+  
+#------ Write buffer(s) if interval is reached ----------------------------------------------------------
+  if (next_meas_read = 0) then
+      #------ full buffer
+      if (local_write_pointer = 32) then
+          #write buffer to PS Store 
+          call flash_ps_save(flash_write_pointer, 32, buffer(0:32))(res)
+          call hardware_io_port_write(0, $10, $00)
+          
+          flash_write_pointer = flash_write_pointer + 1
+          
+          #write pointer reaches end of PS store range
+          if flash_write_pointer > $8010 then
+            flash_write_pointer = $8000
+          end if
+
+          #write pointer tries to overtake read pointer
+          if (flash_write_pointer = flash_read_pointer)
+              flash_read_pointer = flash_write_pointer + 1
+              
+              #update pointer
+              if flash_read_pointer > $8010 then
+                flash_read_pointer = $8000
+              end if
+          end if
+          #clear local buffer
+          local_write_pointer = 0
+      end if
+
+      #------ enough place for another measurement value
+      #write timestamp
+      buffer(local_write_pointer:4) = time_val
+      local_write_pointer = local_write_pointer + 4
+      #write humidity
+      buffer(local_write_pointer:2) = hum_val
+      local_write_pointer = local_write_pointer + 2
+      #write temperature
+      buffer(local_write_pointer:2) = temp_val
+      local_write_pointer = local_write_pointer + 2
+
+      next_meas_read = interval
+      
+      # blink green LED / BUG: this command can also affect the IR LED
+      call hardware_io_port_write(0, $10, $f0)  
+      #call hardware_io_port_write(0, $08, $00)
+  end if
+end
+
+#implementation battery status https://bluegiga.zendesk.com/entries/46449067--BGScript-battery-measurement-Battery-percentage-measurement-demo
+event attributes_user_read_request(connection, handle, offset, maxsize)
+    # check for battery characteristic read request
+    if handle = c_battery_measurement then
+        # queue ADC reading (VDD/3 source, 12 effective bits, internal 1.24v reference)
+        call hardware_adc_read($f, 3, 0)
+        
+        # for details on the ADC operation, reference voltages, etc., please see
+        # Chapter 12 (ADC) of the CC2540 User Guide:
+        #     http://www.ti.com/lit/swru191
+    end if
+    
+    #NEW!
+#------ check for acc buffer characteristic read request ------------------------------------------------
+    #flush buffer after client read it
+    if handle = xgatt_meas_buffer then
+        #Daten solange aus PS Store holen, bis read pointer = write pointer
+        if (flash_read_pointer != flash_write_pointer) then
+            #load data
+            call flash_ps_load(flash_read_pointer)(res, data_len, response_buffer(0:32))
+            #respond
+            call attributes_user_read_response(connection, 0, 16, response_buffer(flash_read_offset:16))
+            
+            #update offset
+            if (flash_read_offset = 0) then
+                flash_read_offset = flash_read_offset + 16
+            else    
+                flash_read_pointer = flash_read_pointer + 1
+                flash_read_offset = 0
+            end if
+            
+            #update pointer
+            if flash_read_pointer > $8010 then
+                flash_read_pointer = $8000
+            end if
+        else
+            call attributes_user_read_response(connection, 0, 0, response_buffer(0:0))
+        end if
+    end if
+end
+
+event hardware_adc_result(input, value)
+    # check for internal VDD/3 result (battery channel)
+    if input = 15 then
+        # ADC behavior:
+        # - Range is [-2048, +2047] when 12 ENOB is selected
+        # - Value will be left-aligned in a 16-bit container, meaning the direct
+        #       result will be in the range [-32768, +32767] and must be shifted by 4
+        # - VDD voltage = (value >> 4) * 3 * 1.24 / 2048
+		# - positive values are 0x7FF0 or lower
+        #
+        # - A "full" battery will read ~2.65v:
+        #   --> (3.3v/3) * (32767/1.24v) = 29068
+        # - An "empty" battery will read ~2.0v (min module voltage):
+        #   --> (2.2v/3) * (32767/1.24v) = 19378
+		
+		# This means we must scale [+17616, +23342] to [0, +100]
+        bat_pct = (value - 19378) * 100 / (29068 - 19378)
+		
+		# enforce 0%/100% bounds
+        if bat_pct > 100 then
+            bat_pct = 100
+        end if
+        if bat_pct < 0 then
+            bat_pct = 0
+        end if
+                
+        # respond with calculated percent (connection=0, result=0, length=1, data=bat_pct)
+        call attributes_user_read_response(0, 0, 1, bat_pct)
+    end if
+end
+
+
+
+# catch new or updated connection
+event connection_status(connection, flags, address, address_type, conn_interval, timeout, latency, bonding)
+    # check for "new connection established" event
+    if (flags & $05) = $05 then
+        # update status vars
+        if connected = 0 then
+			connected = 1
+        end if
+    end if
+    
+    # check for "encrypted" status (e.g. connected + paired)
+    if (flags & $02) = $02 then
+        # update status vars
+        encrypted = 1
+    end if
+end
+
+# Disconnection event listener
+event connection_disconnected(handle,result)
+  #connection disconnected, continue advertising
+  call gap_set_mode(gap_general_discoverable,gap_undirected_connectable)
+  
+  # update status vars
+  connected = 0
+  encrypted = 0
+end

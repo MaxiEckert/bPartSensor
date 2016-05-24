@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<hardware>
+    <sleeposc ppm="30" enable="true" />
+    <usb enable="false" endpoint="none" />
+    <txpower power="15" bias="5" />
+    <script enable="true" />
+    <slow_clock enable="false" />
+    <pmux regulator_pin="7" />
+	  <!-- <timer index="1" enabled_channels="0x1c" divisor="0" mode="2"/> --> 
+    <port index="0" pull="up" tristatemask="0x3C" /> <!-- no pullup for LED -->	
+    <port index="1" pull="up" tristatemask="0" />
+    <port index="2" pull="up" tristatemask="0" />
+</hardware>
